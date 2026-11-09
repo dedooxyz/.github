@@ -1,0 +1,63 @@
+name: Refresh org board
+
+# Kept at exactly one commit: the job amends the existing commit and force-pushes
+# instead of appending a daily one. Only generated files are staged.
+on:
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "tools/**"
+      - "requirements.txt"
+      - ".github/workflows/profile.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: org-board
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clone repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Fetch commit activity
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ORG_LOGIN: dedooxyz
+        run: python tools/fetch_activity.py
+
+      - name: Build the boards
+        run: python tools/build_board.py
+
+      - name: Amend the single commit
+        run: |
+          if git diff --quiet -- profile/board_light.svg profile/board_dark.svg cache/activity.json; then
+            echo "Nothing to refresh."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add profile/board_light.svg profile/board_dark.svg cache/activity.json
+          git commit --amend --no-edit
+          # If a human pushed while this job was running, the lease rejects the
+          # push instead of wiping that work.
+          git push --force-with-lease origin main
